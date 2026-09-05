@@ -1,7 +1,7 @@
 # TracerCube
 
-Raytracer sencillo escrito en Rust que renderiza dos cubos giratorios de distinto
-color y tamaño, sin texturas. Ambos rotan sobre su propio centro y usan solamente
+Raytracer sencillo escrito en Rust que renderiza dos cubos de distinto color y
+tamaño, sin texturas. Puedes moverlos manualmente y ambos usan solamente
 iluminación difusa de Lambert:
 
 ```text
@@ -16,3 +16,10 @@ cargo run --release
 ```
 
 Presiona `Esc` para cerrar la ventana.
+
+## Controles
+
+- `1`: seleccionar el cubo naranja.
+- `2`: seleccionar el cubo azul.
+- `WASD`: mover el cubo seleccionado.
+- `Esc`: salir.

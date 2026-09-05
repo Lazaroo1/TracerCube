@@ -71,7 +71,7 @@ fn main() -> Result<(), minifb::Error> {
     ];
 
     let mut window = Window::new(
-        "TracerCube - Cubos giratorios - ESC para salir",
+        "TracerCube - 1/2 selecciona - WASD mueve - ESC sale",
         WIDTH,
         HEIGHT,
         WindowOptions {
@@ -80,12 +80,36 @@ fn main() -> Result<(), minifb::Error> {
         },
     )?;
     window.set_target_fps(60);
-    let animation_start = Instant::now();
+    let mut selected_cube = 0;
+    let mut previous_frame = Instant::now();
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
-        let elapsed = animation_start.elapsed().as_secs_f32();
-        cubes[0].set_rotation(elapsed * 0.45, elapsed * 0.75);
-        cubes[1].set_rotation(-elapsed * 0.60, -elapsed * 1.05);
+        let now = Instant::now();
+        let delta_time = (now - previous_frame).as_secs_f32().min(0.05);
+        previous_frame = now;
+
+        if window.is_key_down(Key::Key1) {
+            selected_cube = 0;
+        } else if window.is_key_down(Key::Key2) {
+            selected_cube = 1;
+        }
+
+        let movement_speed = 2.0 * delta_time;
+        let mut movement = Vec3::ZERO;
+        if window.is_key_down(Key::W) {
+            movement.y += movement_speed;
+        }
+        if window.is_key_down(Key::S) {
+            movement.y -= movement_speed;
+        }
+        if window.is_key_down(Key::A) {
+            movement.x -= movement_speed;
+        }
+        if window.is_key_down(Key::D) {
+            movement.x += movement_speed;
+        }
+
+        cubes[selected_cube].translate(movement);
 
         render(&mut framebuffer, &cubes);
         window.update_with_buffer(framebuffer.pixels(), WIDTH, HEIGHT)?;
