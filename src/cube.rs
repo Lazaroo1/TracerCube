@@ -4,38 +4,89 @@ pub struct Cube {
     pub min: Vec3,
     pub max: Vec3,
     pub color: Vec3,
+    sin_x: f32,
+    cos_x: f32,
+    sin_y: f32,
+    cos_y: f32,
 }
 
 impl Cube {
     pub const fn new(min: Vec3, max: Vec3, color: Vec3) -> Self {
-        Self { min, max, color }
+        Self {
+            min,
+            max,
+            color,
+            sin_x: 0.0,
+            cos_x: 1.0,
+            sin_y: 0.0,
+            cos_y: 1.0,
+        }
+    }
+
+    pub fn set_rotation(&mut self, angle_x: f32, angle_y: f32) {
+        (self.sin_x, self.cos_x) = angle_x.sin_cos();
+        (self.sin_y, self.cos_y) = angle_y.sin_cos();
+    }
+
+    fn local_to_world(&self, vector: Vec3) -> Vec3 {
+        let after_x = Vec3::new(
+            vector.x,
+            vector.y * self.cos_x - vector.z * self.sin_x,
+            vector.y * self.sin_x + vector.z * self.cos_x,
+        );
+
+        Vec3::new(
+            after_x.x * self.cos_y + after_x.z * self.sin_y,
+            after_x.y,
+            -after_x.x * self.sin_y + after_x.z * self.cos_y,
+        )
+    }
+
+    fn world_to_local(&self, vector: Vec3) -> Vec3 {
+        let after_y = Vec3::new(
+            vector.x * self.cos_y - vector.z * self.sin_y,
+            vector.y,
+            vector.x * self.sin_y + vector.z * self.cos_y,
+        );
+
+        Vec3::new(
+            after_y.x,
+            after_y.y * self.cos_x + after_y.z * self.sin_x,
+            -after_y.y * self.sin_x + after_y.z * self.cos_x,
+        )
     }
 }
 
 impl RayIntersect for Cube {
     fn ray_intersect(&self, origin: Vec3, direction: Vec3) -> Option<Intersect> {
+        let center = (self.min + self.max) * 0.5;
+        let local_min = self.min - center;
+        let local_max = self.max - center;
+        let local_origin = self.world_to_local(origin - center);
+        let local_direction = self.world_to_local(direction);
+
         let slabs = [
             (
-                origin.x,
-                direction.x,
-                self.min.x,
-                self.max.x,
+                local_origin.x,
+                local_direction.x,
+                local_min.x,
+                local_max.x,
                 Vec3::new(-1.0, 0.0, 0.0),
                 Vec3::new(1.0, 0.0, 0.0),
             ),
             (
-                origin.y,
-                direction.y,
-                self.min.y,
-                self.max.y,
+                local_origin.y,
+                local_direction.y,
+                local_min.y,
+                local_max.y,
                 Vec3::new(0.0, -1.0, 0.0),
                 Vec3::new(0.0, 1.0, 0.0),
             ),
             (
-                origin.z,
-                direction.z,
-                self.min.z,
-                self.max.z,
+                local_origin.z,
+                local_direction.z,
+                local_min.z,
+                local_max.z,
                 Vec3::new(0.0, 0.0, -1.0),
                 Vec3::new(0.0, 0.0, 1.0),
             ),
@@ -88,7 +139,7 @@ impl RayIntersect for Cube {
         Some(Intersect {
             distance,
             point: origin + direction * distance,
-            normal,
+            normal: self.local_to_world(normal).normalized(),
         })
     }
 }
@@ -133,5 +184,19 @@ mod tests {
 
         assert_eq!(hit.point, Vec3::new(1.0, 0.0, 0.0));
         assert_eq!(hit.normal, Vec3::new(1.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn rotates_intersection_normal_back_to_world_space() {
+        let mut cube = test_cube();
+        cube.set_rotation(0.0, std::f32::consts::FRAC_PI_2);
+
+        let hit = cube
+            .ray_intersect(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -1.0))
+            .expect("el rayo debe tocar el cubo rotado");
+
+        assert!((hit.distance - 3.0).abs() < 0.0001);
+        assert!(hit.normal.x.abs() < 0.0001);
+        assert!((hit.normal.z - 1.0).abs() < 0.0001);
     }
 }

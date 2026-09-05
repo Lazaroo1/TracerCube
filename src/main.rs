@@ -6,6 +6,7 @@ use cube::Cube;
 use framebuffer::Framebuffer;
 use minifb::{Key, Window, WindowOptions};
 use ray_intersect::{RayIntersect, Vec3};
+use std::time::Instant;
 
 const WIDTH: usize = 900;
 const HEIGHT: usize = 650;
@@ -56,7 +57,7 @@ fn render(framebuffer: &mut Framebuffer, cubes: &[Cube]) {
 
 fn main() -> Result<(), minifb::Error> {
     let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT, 0x0c111b);
-    let cubes = [
+    let mut cubes = [
         Cube::new(
             Vec3::new(-1.7, -0.8, -0.8),
             Vec3::new(-0.1, 0.8, 0.8),
@@ -69,10 +70,8 @@ fn main() -> Result<(), minifb::Error> {
         ),
     ];
 
-    render(&mut framebuffer, &cubes);
-
     let mut window = Window::new(
-        "TracerCube - Dos cubos - ESC para salir",
+        "TracerCube - Cubos giratorios - ESC para salir",
         WIDTH,
         HEIGHT,
         WindowOptions {
@@ -81,8 +80,14 @@ fn main() -> Result<(), minifb::Error> {
         },
     )?;
     window.set_target_fps(60);
+    let animation_start = Instant::now();
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
+        let elapsed = animation_start.elapsed().as_secs_f32();
+        cubes[0].set_rotation(elapsed * 0.45, elapsed * 0.75);
+        cubes[1].set_rotation(-elapsed * 0.60, -elapsed * 1.05);
+
+        render(&mut framebuffer, &cubes);
         window.update_with_buffer(framebuffer.pixels(), WIDTH, HEIGHT)?;
     }
 
