@@ -10,8 +10,8 @@ use ray_intersect::{RayIntersect, Vec3};
 const WIDTH: usize = 900;
 const HEIGHT: usize = 650;
 
-fn render(framebuffer: &mut Framebuffer, cube: &Cube) {
-    let camera = Vec3::new(3.4, 2.7, 4.8);
+fn render(framebuffer: &mut Framebuffer, cubes: &[Cube]) {
+    let camera = Vec3::new(4.2, 3.1, 6.5);
     let target = Vec3::ZERO;
     let camera_forward = (target - camera).normalized();
     let camera_right = camera_forward.cross(Vec3::new(0.0, 1.0, 0.0)).normalized();
@@ -32,11 +32,23 @@ fn render(framebuffer: &mut Framebuffer, cube: &Cube) {
             let ray_direction =
                 (camera_forward + camera_right * screen_x + camera_up * screen_y).normalized();
 
-            if let Some(hit) = cube.ray_intersect(camera, ray_direction) {
-                // Lambert puro: no hay textura, luz ambiente ni brillo especular.
-                let diffuse = hit.normal.dot(light_direction).max(0.0);
-                let final_color = cube.color * diffuse;
-                framebuffer.set_pixel(x, y, final_color.to_rgb());
+            let mut nearest_distance = f32::INFINITY;
+            let mut pixel_color = None;
+
+            for cube in cubes {
+                if let Some(hit) = cube.ray_intersect(camera, ray_direction)
+                    && hit.distance < nearest_distance
+                {
+                    nearest_distance = hit.distance;
+
+                    // Lambert puro: no hay textura, luz ambiente ni brillo especular.
+                    let diffuse = hit.normal.dot(light_direction).max(0.0);
+                    pixel_color = Some((cube.color * diffuse).to_rgb());
+                }
+            }
+
+            if let Some(final_color) = pixel_color {
+                framebuffer.set_pixel(x, y, final_color);
             }
         }
     }
@@ -44,16 +56,23 @@ fn render(framebuffer: &mut Framebuffer, cube: &Cube) {
 
 fn main() -> Result<(), minifb::Error> {
     let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT, 0x0c111b);
-    let cube = Cube::new(
-        Vec3::new(-1.0, -1.0, -1.0),
-        Vec3::new(1.0, 1.0, 1.0),
-        Vec3::new(1.0, 0.32, 0.10),
-    );
+    let cubes = [
+        Cube::new(
+            Vec3::new(-1.7, -0.8, -0.8),
+            Vec3::new(-0.1, 0.8, 0.8),
+            Vec3::new(1.0, 0.32, 0.10),
+        ),
+        Cube::new(
+            Vec3::new(0.2, -0.8, -0.35),
+            Vec3::new(1.5, 0.5, 0.95),
+            Vec3::new(0.08, 0.72, 1.0),
+        ),
+    ];
 
-    render(&mut framebuffer, &cube);
+    render(&mut framebuffer, &cubes);
 
     let mut window = Window::new(
-        "TracerCube - ESC para salir",
+        "TracerCube - Dos cubos - ESC para salir",
         WIDTH,
         HEIGHT,
         WindowOptions {
