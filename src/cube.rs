@@ -10,11 +10,6 @@ impl Cube {
     pub const fn new(min: Vec3, max: Vec3, color: Vec3) -> Self {
         Self { min, max, color }
     }
-
-    pub fn translate(&mut self, movement: Vec3) {
-        self.min = self.min + movement;
-        self.max = self.max + movement;
-    }
 }
 
 impl RayIntersect for Cube {
@@ -138,14 +133,5 @@ mod tests {
 
         assert_eq!(hit.point, Vec3::new(1.0, 0.0, 0.0));
         assert_eq!(hit.normal, Vec3::new(1.0, 0.0, 0.0));
-    }
-
-    #[test]
-    fn translates_cube_without_changing_its_size() {
-        let mut cube = test_cube();
-        cube.translate(Vec3::new(2.0, 1.0, -3.0));
-
-        assert_eq!(cube.min, Vec3::new(1.0, 0.0, -4.0));
-        assert_eq!(cube.max, Vec3::new(3.0, 2.0, -2.0));
     }
 }

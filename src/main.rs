@@ -11,10 +11,62 @@ use std::time::Instant;
 const WIDTH: usize = 900;
 const HEIGHT: usize = 650;
 
-fn render(framebuffer: &mut Framebuffer, cubes: &[Cube]) {
-    let camera = Vec3::new(4.2, 3.1, 6.5);
-    let target = Vec3::ZERO;
-    let camera_forward = (target - camera).normalized();
+struct Camera {
+    target: Vec3,
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
+}
+
+impl Camera {
+    fn new(target: Vec3) -> Self {
+        Self {
+            target,
+            yaw: 0.55,
+            pitch: 0.35,
+            distance: 7.5,
+        }
+    }
+
+    fn position(&self) -> Vec3 {
+        let horizontal_distance = self.distance * self.pitch.cos();
+        self.target
+            + Vec3::new(
+                horizontal_distance * self.yaw.sin(),
+                self.distance * self.pitch.sin(),
+                horizontal_distance * self.yaw.cos(),
+            )
+    }
+
+    fn update(&mut self, window: &Window, delta_seconds: f32) -> bool {
+        let previous = (self.yaw, self.pitch);
+        let rotation_step = 1.5 * delta_seconds;
+
+        if window.is_key_down(Key::A) || window.is_key_down(Key::Left) {
+            self.yaw -= rotation_step;
+        }
+        if window.is_key_down(Key::D) || window.is_key_down(Key::Right) {
+            self.yaw += rotation_step;
+        }
+        if window.is_key_down(Key::W) || window.is_key_down(Key::Up) {
+            self.pitch += rotation_step;
+        }
+        if window.is_key_down(Key::S) || window.is_key_down(Key::Down) {
+            self.pitch -= rotation_step;
+        }
+        if window.is_key_down(Key::R) {
+            self.yaw = 0.55;
+            self.pitch = 0.35;
+        }
+
+        self.pitch = self.pitch.clamp(-1.35, 1.35);
+        previous != (self.yaw, self.pitch)
+    }
+}
+
+fn render(framebuffer: &mut Framebuffer, cubes: &[Cube], camera: &Camera) {
+    let camera_position = camera.position();
+    let camera_forward = (camera.target - camera_position).normalized();
     let camera_right = camera_forward.cross(Vec3::new(0.0, 1.0, 0.0)).normalized();
     let camera_up = camera_right.cross(camera_forward).normalized();
 
@@ -37,7 +89,7 @@ fn render(framebuffer: &mut Framebuffer, cubes: &[Cube]) {
             let mut pixel_color = None;
 
             for cube in cubes {
-                if let Some(hit) = cube.ray_intersect(camera, ray_direction)
+                if let Some(hit) = cube.ray_intersect(camera_position, ray_direction)
                     && hit.distance < nearest_distance
                 {
                     nearest_distance = hit.distance;
@@ -57,7 +109,7 @@ fn render(framebuffer: &mut Framebuffer, cubes: &[Cube]) {
 
 fn main() -> Result<(), minifb::Error> {
     let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT, 0x0c111b);
-    let mut cubes = [
+    let cubes = [
         Cube::new(
             Vec3::new(-1.7, -0.8, -0.8),
             Vec3::new(-0.1, 0.8, 0.8),
@@ -69,9 +121,11 @@ fn main() -> Result<(), minifb::Error> {
             Vec3::new(0.08, 0.72, 1.0),
         ),
     ];
+    let mut camera = Camera::new(Vec3::new(-0.1, 0.0, 0.1));
+    render(&mut framebuffer, &cubes, &camera);
 
     let mut window = Window::new(
-        "TracerCube - 1/2 selecciona - WASD mueve - ESC sale",
+        "TracerCube - WASD orbita la camara - R reinicia - ESC sale",
         WIDTH,
         HEIGHT,
         WindowOptions {
@@ -80,7 +134,6 @@ fn main() -> Result<(), minifb::Error> {
         },
     )?;
     window.set_target_fps(60);
-    let mut selected_cube = 0;
     let mut previous_frame = Instant::now();
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
@@ -88,32 +141,24 @@ fn main() -> Result<(), minifb::Error> {
         let delta_time = (now - previous_frame).as_secs_f32().min(0.05);
         previous_frame = now;
 
-        if window.is_key_down(Key::Key1) {
-            selected_cube = 0;
-        } else if window.is_key_down(Key::Key2) {
-            selected_cube = 1;
+        if camera.update(&window, delta_time) {
+            render(&mut framebuffer, &cubes, &camera);
         }
-
-        let movement_speed = 2.0 * delta_time;
-        let mut movement = Vec3::ZERO;
-        if window.is_key_down(Key::W) {
-            movement.y += movement_speed;
-        }
-        if window.is_key_down(Key::S) {
-            movement.y -= movement_speed;
-        }
-        if window.is_key_down(Key::A) {
-            movement.x -= movement_speed;
-        }
-        if window.is_key_down(Key::D) {
-            movement.x += movement_speed;
-        }
-
-        cubes[selected_cube].translate(movement);
-
-        render(&mut framebuffer, &cubes);
         window.update_with_buffer(framebuffer.pixels(), WIDTH, HEIGHT)?;
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn orbital_camera_stays_at_the_requested_distance() {
+        let camera = Camera::new(Vec3::new(-0.1, 0.0, 0.1));
+        let distance_to_target = (camera.position() - camera.target).length();
+
+        assert!((distance_to_target - camera.distance).abs() < 0.0001);
+    }
 }
