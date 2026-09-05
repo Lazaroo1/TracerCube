@@ -3,12 +3,11 @@ use crate::ray_intersect::{Intersect, RayIntersect, Vec3};
 pub struct Cube {
     pub min: Vec3,
     pub max: Vec3,
-    pub color: Vec3,
 }
 
 impl Cube {
-    pub const fn new(min: Vec3, max: Vec3, color: Vec3) -> Self {
-        Self { min, max, color }
+    pub const fn new(min: Vec3, max: Vec3) -> Self {
+        Self { min, max }
     }
 }
 
@@ -98,11 +97,7 @@ mod tests {
     use super::*;
 
     fn test_cube() -> Cube {
-        Cube::new(
-            Vec3::new(-1.0, -1.0, -1.0),
-            Vec3::new(1.0, 1.0, 1.0),
-            Vec3::new(1.0, 0.2, 0.1),
-        )
+        Cube::new(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0))
     }
 
     #[test]

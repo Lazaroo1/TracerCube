@@ -40,7 +40,7 @@ impl Vec3 {
     }
 
     pub fn to_rgb(self) -> u32 {
-        let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u32;
+        let channel = |value: f32| (value.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u32;
         (channel(self.x) << 16) | (channel(self.y) << 8) | channel(self.z)
     }
 }

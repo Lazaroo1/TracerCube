@@ -1,21 +1,20 @@
 # TracerCube
 
-Raytracer sencillo escrito en Rust que renderiza dos cubos de distinto color y
-tamaño, sin texturas. Los cubos permanecen quietos mientras puedes orbitar la
-cámara a su alrededor. Ambos usan solamente iluminación difusa de Lambert:
+Raytracer en Rust con tres cubos idénticos y texturas/materiales procedurales:
 
-```text
-intensidad = max(normal · dirección_hacia_la_luz, 0)
-color_final = color_base * intensidad
-```
+- Cerámica con patrón ajedrezado rojo y dorado.
+- Metal naranja cepillado.
+- Vidrio azulado con reflexión, refracción y efecto Fresnel.
+
+La escena también incluye un suelo ajedrezado, sombras y un cielo en degradado
+para que las propiedades reflectantes y transparentes sean visibles. No utiliza
+archivos de imagen externos; las texturas se calculan directamente en cada cara.
 
 ## Ejecutar
 
 ```powershell
 cargo run --release
 ```
-
-Presiona `Esc` para cerrar la ventana.
 
 ## Controles
 
