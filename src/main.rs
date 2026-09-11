@@ -1,18 +1,20 @@
-mod cube;
 mod framebuffer;
 mod ray_intersect;
+mod sphere;
 
-use cube::Cube;
 use framebuffer::Framebuffer;
 use minifb::{Key, Window, WindowOptions};
 use ray_intersect::{Intersect, RayIntersect, Vec3};
+use sphere::Sphere;
+use std::f32::consts::{PI, TAU};
 use std::time::Instant;
 
 const WIDTH: usize = 800;
 const HEIGHT: usize = 600;
 const MAX_BOUNCES: u32 = 5;
 const RAY_BIAS: f32 = 0.001;
-const FLOOR_Y: f32 = -0.82;
+const FLOOR_Y: f32 = -1.0;
+const BLACK_HOLE_Z: f32 = -0.15;
 const LIGHT_POSITION: Vec3 = Vec3::new(-3.0, 4.5, 3.5);
 
 #[derive(Clone, Copy)]
@@ -23,7 +25,7 @@ enum Material {
 }
 
 struct SceneObject {
-    cube: Cube,
+    sphere: Sphere,
     material: Material,
 }
 
@@ -39,8 +41,8 @@ impl Camera {
         Self {
             target,
             yaw: 0.35,
-            pitch: 0.35,
-            distance: 8.0,
+            pitch: 0.32,
+            distance: 4.2,
         }
     }
 
@@ -72,10 +74,10 @@ impl Camera {
         }
         if window.is_key_down(Key::R) {
             self.yaw = 0.35;
-            self.pitch = 0.35;
+            self.pitch = 0.32;
         }
 
-        self.pitch = self.pitch.clamp(-1.35, 1.35);
+        self.pitch = self.pitch.clamp(-1.20, 1.30);
         previous != (self.yaw, self.pitch)
     }
 }
@@ -127,12 +129,10 @@ fn sky_color(direction: Vec3) -> Vec3 {
         vertical,
     );
 
-    // Resplandor magenta en el horizonte.
     let horizon = (1.0 - direction.y.abs() / 0.34).clamp(0.0, 1.0).powi(3);
     color = color + Vec3::new(0.42, 0.025, 0.30) * horizon;
 
-    // Nebulosa ondulada que cruza el cielo.
-    let longitude = 0.5 + direction.z.atan2(direction.x) / std::f32::consts::TAU;
+    let longitude = 0.5 + direction.z.atan2(direction.x) / TAU;
     let nebula_center = 0.16 + (longitude * 15.0).sin() * 0.09;
     let nebula_distance = (direction.y - nebula_center).abs();
     let nebula_band = (1.0 - nebula_distance / 0.25).clamp(0.0, 1.0).powi(3);
@@ -144,8 +144,7 @@ fn sky_color(direction: Vec3) -> Vec3 {
     );
     color = color + nebula_color * (nebula_band * (0.28 + nebula_detail * 0.55));
 
-    // Campo de estrellas estable en coordenadas esféricas.
-    let latitude = 0.5 + direction.y.asin() / std::f32::consts::PI;
+    let latitude = 0.5 + direction.y.asin() / PI;
     let star_x = longitude * 420.0;
     let star_y = latitude * 210.0;
     let cell_x = star_x.floor();
@@ -162,7 +161,6 @@ fn sky_color(direction: Vec3) -> Vec3 {
     );
     color = color + star_tint * (star_brightness * 2.6);
 
-    // Planeta violeta con atmósfera y anillo inclinado.
     let planet_direction = Vec3::new(-0.52, 0.34, -0.78).normalized();
     let planet_right = Vec3::new(0.0, 1.0, 0.0)
         .cross(planet_direction)
@@ -204,7 +202,7 @@ fn floor_intersect(origin: Vec3, direction: Vec3) -> Option<(f32, Vec3)> {
     Some((distance, origin + direction * distance))
 }
 
-fn closest_cube_hit(
+fn closest_sphere_hit(
     origin: Vec3,
     direction: Vec3,
     objects: &[SceneObject],
@@ -214,7 +212,7 @@ fn closest_cube_hit(
         .enumerate()
         .filter_map(|(index, object)| {
             object
-                .cube
+                .sphere
                 .ray_intersect(origin, direction)
                 .map(|hit| (index, hit))
         })
@@ -229,7 +227,7 @@ fn shadow_visibility(point: Vec3, normal: Vec3, objects: &[SceneObject]) -> f32 
     let mut visibility = 1.0;
 
     for object in objects {
-        let Some(hit) = object.cube.ray_intersect(origin, light_direction) else {
+        let Some(hit) = object.sphere.ray_intersect(origin, light_direction) else {
             continue;
         };
         if hit.distance >= light_distance {
@@ -248,41 +246,10 @@ fn shadow_visibility(point: Vec3, normal: Vec3, objects: &[SceneObject]) -> f32 
     visibility
 }
 
-/// Proyección planar en cada cara para obtener coordenadas de textura continuas.
-fn cube_uv(point: Vec3, normal: Vec3) -> (f32, f32) {
-    if normal.x.abs() > 0.5 {
-        (point.z, point.y)
-    } else if normal.y.abs() > 0.5 {
-        (point.x, point.z)
-    } else {
-        (point.x, point.y)
-    }
-}
-
-fn cube_edge_glow(cube: &Cube, point: Vec3, normal: Vec3) -> f32 {
-    let edge_distance = if normal.x.abs() > 0.5 {
-        (point.y - cube.min.y)
-            .min(cube.max.y - point.y)
-            .min(point.z - cube.min.z)
-            .min(cube.max.z - point.z)
-    } else if normal.y.abs() > 0.5 {
-        (point.x - cube.min.x)
-            .min(cube.max.x - point.x)
-            .min(point.z - cube.min.z)
-            .min(cube.max.z - point.z)
-    } else {
-        (point.x - cube.min.x)
-            .min(cube.max.x - point.x)
-            .min(point.y - cube.min.y)
-            .min(cube.max.y - point.y)
-    };
-
-    (1.0 - edge_distance / 0.055).clamp(0.0, 1.0).powi(3)
-}
-
-fn ceramic_texture(point: Vec3, normal: Vec3) -> Vec3 {
-    let (u, v) = cube_uv(point, normal);
-    let checker = ((u * 5.0).floor() as i32 + (v * 5.0).floor() as i32) & 1;
+fn ceramic_texture(normal: Vec3) -> Vec3 {
+    let u = 0.5 + normal.z.atan2(normal.x) / TAU;
+    let v = 0.5 - normal.y.asin() / PI;
+    let checker = ((u * 12.0).floor() as i32 + (v * 8.0).floor() as i32) & 1;
 
     if checker == 0 {
         Vec3::new(0.72, 0.055, 0.035)
@@ -291,47 +258,50 @@ fn ceramic_texture(point: Vec3, normal: Vec3) -> Vec3 {
     }
 }
 
-fn shade_floor(point: Vec3, objects: &[SceneObject]) -> Vec3 {
-    let normal = Vec3::new(0.0, 1.0, 0.0);
-    let light_direction = (LIGHT_POSITION - point).normalized();
-    let visibility = shadow_visibility(point, normal, objects);
-    let checker = (point.x.floor() as i32 + point.z.floor() as i32) & 1;
-    let base = if checker == 0 {
-        Vec3::new(0.015, 0.035, 0.10)
-    } else {
-        Vec3::new(0.21, 0.018, 0.25)
-    };
-    let diffuse = normal.dot(light_direction).max(0.0) * visibility;
-    let distance = (point.x * point.x + point.z * point.z).sqrt();
-    let distance_fade = 1.0 / (1.0 + distance * distance * 0.018);
+fn shade_black_hole(point: Vec3, objects: &[SceneObject]) -> Vec3 {
+    let centered_x = point.x;
+    let centered_z = point.z - BLACK_HOLE_Z;
+    let radius = (centered_x * centered_x + centered_z * centered_z).sqrt();
 
-    let fraction_x = point.x - point.x.floor();
-    let fraction_z = point.z - point.z.floor();
-    let grid_distance = fraction_x
-        .min(1.0 - fraction_x)
-        .min(fraction_z.min(1.0 - fraction_z));
-    let grid_glow = (1.0 - grid_distance / 0.045).clamp(0.0, 1.0).powi(3);
-    let grid_color = if checker == 0 {
-        Vec3::new(0.02, 0.85, 1.0)
-    } else {
-        Vec3::new(1.0, 0.04, 0.72)
-    };
+    // Dentro del horizonte de eventos no escapa ninguna luz.
+    if radius < 0.78 {
+        return Vec3::ZERO;
+    }
 
-    // Tres halos sobre el tablero conectan visualmente el suelo con los cubos.
-    let pool = |center_x: f32, center_z: f32| {
-        let dx = point.x - center_x;
-        let dz = point.z - center_z;
-        (1.0 - (dx * dx + dz * dz).sqrt() / 1.45)
-            .clamp(0.0, 1.0)
-            .powi(3)
-    };
-    let floor_halos = Vec3::new(1.0, 0.08, 0.03) * pool(-1.55, 0.15)
-        + Vec3::new(1.0, 0.25, 0.02) * pool(0.0, -0.10)
-        + Vec3::new(0.02, 0.70, 1.0) * pool(1.55, 0.15);
+    let angle = centered_z.atan2(centered_x);
+    let inner_fade = smoothstep(0.78, 1.08, radius);
+    let outer_fade = 1.0 - smoothstep(3.6, 5.3, radius);
+    let disk_mask = inner_fade * outer_fade;
 
-    base * (0.12 + diffuse * 0.88)
-        + grid_color * (grid_glow * distance_fade * 1.15)
-        + floor_halos * (0.20 * distance_fade)
+    let spiral_phase = angle * 6.0 - radius * 10.5 + (angle * 3.0).sin() * 1.7;
+    let hot_filament = (spiral_phase.sin() * 0.5 + 0.5).powi(7);
+    let secondary_filament = ((spiral_phase * 0.47 + radius * 17.0).sin() * 0.5 + 0.5).powi(10);
+    let turbulence = hash_2d((centered_x * 18.0).floor(), (centered_z * 18.0).floor());
+
+    let heat = (1.0 - (radius - 0.78) / 4.6).clamp(0.0, 1.0);
+    let cool_disk = Vec3::new(0.12, 0.025, 0.48);
+    let hot_disk = Vec3::new(1.0, 0.12, 0.015);
+    let disk_color = mix(cool_disk, hot_disk, heat);
+    let visibility = shadow_visibility(point, Vec3::new(0.0, 1.0, 0.0), objects);
+    let disk = disk_color
+        * (disk_mask
+            * (0.16 + hot_filament * 1.8 + secondary_filament * 0.7 + turbulence * 0.12)
+            * (0.55 + visibility * 0.45));
+
+    // Anillo de fotones intensamente brillante justo fuera del horizonte.
+    let photon_ring = (1.0 - (radius - 0.86).abs() / 0.065)
+        .clamp(0.0, 1.0)
+        .powi(5);
+    let lensing_halo = (1.0 - (radius - 0.98).abs() / 0.24).clamp(0.0, 1.0).powi(3);
+
+    let distant_dust = hash_2d((centered_x * 7.0).floor(), (centered_z * 7.0).floor());
+    let dust = smoothstep(0.975, 1.0, distant_dust) * outer_fade;
+
+    Vec3::new(0.001, 0.002, 0.008)
+        + disk
+        + Vec3::new(1.0, 0.72, 0.32) * (photon_ring * 2.4)
+        + Vec3::new(0.42, 0.04, 0.82) * (lensing_halo * 0.32)
+        + Vec3::new(0.08, 0.48, 1.0) * (dust * 0.75)
 }
 
 fn trace_ray(origin: Vec3, direction: Vec3, objects: &[SceneObject], bounces_left: u32) -> Vec3 {
@@ -339,41 +309,39 @@ fn trace_ray(origin: Vec3, direction: Vec3, objects: &[SceneObject], bounces_lef
         return sky_color(direction);
     }
 
-    let cube_hit = closest_cube_hit(origin, direction, objects);
+    let sphere_hit = closest_sphere_hit(origin, direction, objects);
     let floor_hit = floor_intersect(origin, direction);
 
     if let Some((floor_distance, point)) = floor_hit
-        && cube_hit
+        && sphere_hit
             .as_ref()
             .is_none_or(|(_, hit)| floor_distance < hit.distance)
     {
-        return shade_floor(point, objects);
+        return shade_black_hole(point, objects);
     }
 
-    if let Some((object_index, hit)) = cube_hit {
-        return shade_cube(object_index, hit, direction, objects, bounces_left - 1);
+    if let Some((object_index, hit)) = sphere_hit {
+        return shade_sphere(object_index, hit, direction, objects, bounces_left - 1);
     }
 
     sky_color(direction)
 }
 
-fn shade_cube(
+fn shade_sphere(
     object_index: usize,
     hit: Intersect,
     incoming: Vec3,
     objects: &[SceneObject],
     bounces_left: u32,
 ) -> Vec3 {
-    let object = &objects[object_index];
-    let material = object.material;
+    let material = objects[object_index].material;
     let to_light = (LIGHT_POSITION - hit.point).normalized();
     let to_camera = -incoming;
-    let edge = cube_edge_glow(&object.cube, hit.point, hit.normal);
     let rim = (1.0 - hit.normal.dot(to_camera).abs()).powi(3);
 
     match material {
         Material::Ceramic => {
-            let base = ceramic_texture(hit.point, hit.normal);
+            let base = ceramic_texture(hit.normal);
             let visibility = shadow_visibility(hit.point, hit.normal, objects);
             let diffuse = hit.normal.dot(to_light).max(0.0) * visibility;
             let half_vector = (to_light + to_camera).normalized();
@@ -389,12 +357,11 @@ fn shade_cube(
             base * (0.14 + diffuse * 0.86)
                 + Vec3::new(1.0, 0.95, 0.88) * (highlight * 0.35)
                 + reflected * 0.045
-                + Vec3::new(1.0, 0.12, 0.025) * (edge * 1.2)
-                + Vec3::new(0.08, 0.50, 1.0) * (rim * 0.08)
+                + Vec3::new(0.38, 0.04, 0.72) * (rim * 0.14)
         }
         Material::BrushedMetal { color, roughness } => {
-            let (u, v) = cube_uv(hit.point, hit.normal);
-            let grain = ((v * 95.0 + (u * 14.0).sin() * 3.0).sin() * 0.5 + 0.5) * roughness;
+            let grain = ((hit.point.y * 95.0 + (hit.point.x * 14.0).sin() * 3.0).sin() * 0.5 + 0.5)
+                * roughness;
             let brushed_color = color * (0.82 + grain);
             let reflected_direction =
                 (reflect(incoming, hit.normal) + hit.normal * grain).normalized();
@@ -412,8 +379,7 @@ fn shade_cube(
             multiply(reflected, brushed_color) * 0.82
                 + brushed_color * (0.04 + diffuse * 0.16)
                 + Vec3::new(1.0, 0.82, 0.48) * (highlight * 0.7)
-                + Vec3::new(1.0, 0.25, 0.035) * (edge * 1.45)
-                + Vec3::new(0.95, 0.04, 0.55) * (rim * 0.12)
+                + Vec3::new(1.0, 0.08, 0.52) * (rim * 0.12)
         }
         Material::Glass {
             tint,
@@ -458,36 +424,29 @@ fn shade_cube(
             transmitted * (1.0 - reflectance)
                 + reflected * reflectance
                 + Vec3::new(0.8, 0.95, 1.0) * (highlight * 0.9)
-                + Vec3::new(0.02, 0.88, 1.0) * (edge * 1.8 + rim * 0.42)
+                + Vec3::new(0.02, 0.82, 1.0) * (rim * 0.42)
         }
     }
 }
 
-fn cube_at(center: Vec3, size: f32) -> Cube {
-    let half = Vec3::new(size * 0.5, size * 0.5, size * 0.5);
-    Cube::new(center - half, center + half)
-}
-
 fn build_scene() -> [SceneObject; 3] {
-    const CUBE_SIZE: f32 = 1.3;
-
     [
         SceneObject {
-            cube: cube_at(Vec3::new(-1.55, -0.15, 0.15), CUBE_SIZE),
-            material: Material::Ceramic,
-        },
-        SceneObject {
-            cube: cube_at(Vec3::new(0.0, -0.15, -0.10), CUBE_SIZE),
-            material: Material::BrushedMetal {
-                color: Vec3::new(0.95, 0.55, 0.16),
-                roughness: 0.16,
-            },
-        },
-        SceneObject {
-            cube: cube_at(Vec3::new(1.55, -0.15, 0.15), CUBE_SIZE),
+            sphere: Sphere::new(Vec3::new(0.45, -0.15, 0.35), 0.72),
             material: Material::Glass {
                 tint: Vec3::new(0.76, 0.94, 0.98),
                 refractive_index: 1.52,
+            },
+        },
+        SceneObject {
+            sphere: Sphere::new(Vec3::new(-0.55, -0.15, -0.20), 0.82),
+            material: Material::Ceramic,
+        },
+        SceneObject {
+            sphere: Sphere::new(Vec3::new(0.45, 0.35, -0.55), 0.65),
+            material: Material::BrushedMetal {
+                color: Vec3::new(0.95, 0.55, 0.16),
+                roughness: 0.16,
             },
         },
     ]
@@ -499,7 +458,7 @@ fn render(framebuffer: &mut Framebuffer, objects: &[SceneObject], camera: &Camer
     let right = forward.cross(Vec3::new(0.0, 1.0, 0.0)).normalized();
     let up = right.cross(forward).normalized();
     let aspect_ratio = WIDTH as f32 / HEIGHT as f32;
-    let scale = (55.0_f32.to_radians() * 0.5).tan();
+    let scale = (60.0_f32.to_radians() * 0.5).tan();
 
     framebuffer.clear();
 
@@ -516,13 +475,13 @@ fn render(framebuffer: &mut Framebuffer, objects: &[SceneObject], camera: &Camer
 }
 
 fn main() -> Result<(), minifb::Error> {
-    let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT, 0x0c111b);
+    let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT, 0x000000);
     let objects = build_scene();
-    let mut camera = Camera::new(Vec3::new(0.0, -0.10, 0.05));
+    let mut camera = Camera::new(Vec3::new(0.0, -0.05, -0.10));
     render(&mut framebuffer, &objects, &camera);
 
     let mut window = Window::new(
-        "Cubos texturizados - WASD orbita - R reinicia - ESC sale",
+        "Esferas sobre agujero negro - WASD orbita - R reinicia - ESC sale",
         WIDTH,
         HEIGHT,
         WindowOptions {
@@ -554,7 +513,7 @@ mod tests {
 
     #[test]
     fn orbital_camera_stays_at_the_requested_distance() {
-        let camera = Camera::new(Vec3::new(0.0, -0.1, 0.05));
+        let camera = Camera::new(Vec3::new(0.0, -0.05, -0.10));
         let distance_to_target = (camera.position() - camera.target).length();
 
         assert!((distance_to_target - camera.distance).abs() < 0.0001);
@@ -562,31 +521,29 @@ mod tests {
 
     #[test]
     fn ceramic_texture_alternates_colors() {
-        let normal = Vec3::new(0.0, 0.0, 1.0);
-        let first = ceramic_texture(Vec3::new(0.01, 0.01, 0.65), normal);
-        let second = ceramic_texture(Vec3::new(0.25, 0.01, 0.65), normal);
+        let first = ceramic_texture(Vec3::new(1.0, 0.0, 0.0));
+        let second = ceramic_texture(Vec3::new(0.866_025_4, 0.0, 0.5));
 
         assert_ne!(first, second);
     }
 
     #[test]
-    fn cube_edges_glow_more_than_the_face_center() {
-        let cube = cube_at(Vec3::ZERO, 2.0);
-        let normal = Vec3::new(0.0, 0.0, 1.0);
-        let center_glow = cube_edge_glow(&cube, Vec3::new(0.0, 0.0, 1.0), normal);
-        let edge_glow = cube_edge_glow(&cube, Vec3::new(0.99, 0.0, 1.0), normal);
+    fn event_horizon_is_darker_than_the_photon_ring() {
+        let objects = build_scene();
+        let center = shade_black_hole(Vec3::new(0.0, FLOOR_Y, BLACK_HOLE_Z), &objects);
+        let ring = shade_black_hole(Vec3::new(0.86, FLOOR_Y, BLACK_HOLE_Z), &objects);
 
-        assert!(edge_glow > center_glow);
+        assert!(ring.length() > center.length());
     }
 
     #[test]
-    fn all_three_cubes_have_the_same_size() {
-        for object in build_scene() {
-            let size = object.cube.max - object.cube.min;
-            assert!((size.x - 1.3).abs() < 0.0001);
-            assert!((size.y - 1.3).abs() < 0.0001);
-            assert!((size.z - 1.3).abs() < 0.0001);
-        }
+    fn scene_contains_the_original_three_spheres() {
+        let objects = build_scene();
+
+        assert_eq!(objects.len(), 3);
+        assert!((objects[0].sphere.radius - 0.72).abs() < 0.0001);
+        assert!((objects[1].sphere.radius - 0.82).abs() < 0.0001);
+        assert!((objects[2].sphere.radius - 0.65).abs() < 0.0001);
     }
 
     #[test]
