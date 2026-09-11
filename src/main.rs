@@ -5,28 +5,40 @@ mod sphere;
 use framebuffer::Framebuffer;
 use minifb::{Key, Window, WindowOptions};
 use ray_intersect::{Intersect, RayIntersect, Vec3};
+use rayon::prelude::*;
 use sphere::Sphere;
 use std::f32::consts::{PI, TAU};
 use std::time::Instant;
 
-const WIDTH: usize = 800;
-const HEIGHT: usize = 600;
-const MAX_BOUNCES: u32 = 5;
+const WIDTH: usize = 720;
+const HEIGHT: usize = 540;
+const MAX_BOUNCES: u32 = 4;
 const RAY_BIAS: f32 = 0.001;
-const FLOOR_Y: f32 = -1.0;
+const FLOOR_Y: f32 = -1.35;
 const BLACK_HOLE_Z: f32 = -0.15;
 const LIGHT_POSITION: Vec3 = Vec3::new(-3.0, 4.5, 3.5);
+const PLANET_CENTER: Vec3 = Vec3::new(0.0, 0.20, -0.15);
 
 #[derive(Clone, Copy)]
 enum Material {
     Ceramic,
     BrushedMetal { color: Vec3, roughness: f32 },
     Glass { tint: Vec3, refractive_index: f32 },
+    Planet,
+}
+
+#[derive(Clone, Copy)]
+struct Orbit {
+    radius: f32,
+    speed: f32,
+    phase: f32,
+    height: f32,
 }
 
 struct SceneObject {
     sphere: Sphere,
     material: Material,
+    orbit: Option<Orbit>,
 }
 
 struct Camera {
@@ -42,7 +54,7 @@ impl Camera {
             target,
             yaw: 0.35,
             pitch: 0.32,
-            distance: 4.2,
+            distance: 7.4,
         }
     }
 
@@ -56,8 +68,7 @@ impl Camera {
             )
     }
 
-    fn update(&mut self, window: &Window, delta_seconds: f32) -> bool {
-        let previous = (self.yaw, self.pitch);
+    fn update(&mut self, window: &Window, delta_seconds: f32) {
         let rotation_step = 1.5 * delta_seconds;
 
         if window.is_key_down(Key::A) || window.is_key_down(Key::Left) {
@@ -78,7 +89,6 @@ impl Camera {
         }
 
         self.pitch = self.pitch.clamp(-1.20, 1.30);
-        previous != (self.yaw, self.pitch)
     }
 }
 
@@ -161,32 +171,7 @@ fn sky_color(direction: Vec3) -> Vec3 {
     );
     color = color + star_tint * (star_brightness * 2.6);
 
-    let planet_direction = Vec3::new(-0.52, 0.34, -0.78).normalized();
-    let planet_right = Vec3::new(0.0, 1.0, 0.0)
-        .cross(planet_direction)
-        .normalized();
-    let planet_up = planet_direction.cross(planet_right).normalized();
-    let planet_depth = direction.dot(planet_direction);
-    let planet_x = direction.dot(planet_right);
-    let planet_y = direction.dot(planet_up);
-    let planet_radius = (planet_x * planet_x + planet_y * planet_y).sqrt();
-    let atmosphere = smoothstep(0.16, 0.105, planet_radius) * smoothstep(0.65, 0.95, planet_depth);
-    color = color + Vec3::new(0.20, 0.35, 1.0) * (atmosphere * 0.75);
-
-    let ring_radius = ((planet_x / 0.205).powi(2) + (planet_y / 0.050).powi(2)).sqrt();
-    let ring = (1.0 - (ring_radius - 1.0).abs() / 0.16)
-        .clamp(0.0, 1.0)
-        .powi(2)
-        * smoothstep(0.65, 0.95, planet_depth);
-    color = color + Vec3::new(1.0, 0.18, 0.72) * (ring * 1.35);
-
-    let planet_mask =
-        smoothstep(0.112, 0.102, planet_radius) * smoothstep(0.65, 0.95, planet_depth);
-    let surface_light =
-        (0.24 + (-planet_x * 5.0 + planet_y * 2.0).clamp(-0.1, 0.76)).clamp(0.12, 1.0);
-    let surface_bands = (planet_y * 110.0 + (planet_x * 55.0).sin()).sin() * 0.08 + 0.92;
-    let planet_color = Vec3::new(0.48, 0.055, 0.72) * (surface_light * surface_bands);
-    mix(color, planet_color, planet_mask)
+    color
 }
 
 fn floor_intersect(origin: Vec3, direction: Vec3) -> Option<(f32, Vec3)> {
@@ -200,6 +185,57 @@ fn floor_intersect(origin: Vec3, direction: Vec3) -> Option<(f32, Vec3)> {
     }
 
     Some((distance, origin + direction * distance))
+}
+
+fn planet_ring_intersect(origin: Vec3, direction: Vec3) -> Option<Intersect> {
+    if direction.y.abs() <= f32::EPSILON {
+        return None;
+    }
+
+    let distance = (PLANET_CENTER.y - origin.y) / direction.y;
+    if distance <= RAY_BIAS {
+        return None;
+    }
+
+    let point = origin + direction * distance;
+    let offset = point - PLANET_CENTER;
+    let radius = (offset.x * offset.x + offset.z * offset.z).sqrt();
+    if !(1.18..=1.82).contains(&radius) {
+        return None;
+    }
+
+    let normal = if direction.y < 0.0 {
+        Vec3::new(0.0, 1.0, 0.0)
+    } else {
+        Vec3::new(0.0, -1.0, 0.0)
+    };
+
+    Some(Intersect {
+        distance,
+        point,
+        normal,
+    })
+}
+
+fn shade_planet_ring(hit: Intersect, objects: &[SceneObject]) -> Vec3 {
+    let offset = hit.point - PLANET_CENTER;
+    let radius = (offset.x * offset.x + offset.z * offset.z).sqrt();
+    let angle = offset.z.atan2(offset.x);
+    let fine_bands = (radius * 115.0 + angle * 2.5).sin() * 0.5 + 0.5;
+    let wide_bands = (radius * 29.0).sin() * 0.5 + 0.5;
+    let lane = smoothstep(0.08, 0.28, fine_bands);
+    let ring_color = mix(
+        Vec3::new(0.33, 0.055, 0.55),
+        Vec3::new(1.0, 0.52, 0.12),
+        wide_bands,
+    );
+    let to_light = (LIGHT_POSITION - hit.point).normalized();
+    let visibility = shadow_visibility(hit.point, hit.normal, objects);
+    let diffuse = hit.normal.dot(to_light).max(0.0) * visibility;
+    let edge_fade = smoothstep(1.18, 1.28, radius) * (1.0 - smoothstep(1.70, 1.82, radius));
+
+    ring_color * ((0.22 + diffuse * 0.78) * lane * edge_fade)
+        + Vec3::new(1.0, 0.18, 0.72) * ((1.0 - lane) * 0.22 * edge_fade)
 }
 
 fn closest_sphere_hit(
@@ -258,6 +294,21 @@ fn ceramic_texture(normal: Vec3) -> Vec3 {
     }
 }
 
+fn planet_texture(normal: Vec3) -> Vec3 {
+    let longitude = normal.z.atan2(normal.x);
+    let latitude = normal.y.asin();
+    let bands = (latitude * 23.0 + (longitude * 4.0).sin() * 0.45).sin() * 0.5 + 0.5;
+    let storms = ((longitude * 8.0 - latitude * 13.0).sin() * 0.5 + 0.5).powi(5);
+    let equator_glow = (1.0 - normal.y.abs()).powi(4);
+
+    mix(
+        Vec3::new(0.18, 0.035, 0.46),
+        Vec3::new(0.92, 0.24, 0.10),
+        bands,
+    ) + Vec3::new(1.0, 0.58, 0.12) * (storms * 0.32)
+        + Vec3::new(0.08, 0.22, 0.65) * (equator_glow * 0.20)
+}
+
 fn shade_black_hole(point: Vec3, objects: &[SceneObject]) -> Vec3 {
     let centered_x = point.x;
     let centered_z = point.z - BLACK_HOLE_Z;
@@ -310,7 +361,19 @@ fn trace_ray(origin: Vec3, direction: Vec3, objects: &[SceneObject], bounces_lef
     }
 
     let sphere_hit = closest_sphere_hit(origin, direction, objects);
+    let ring_hit = planet_ring_intersect(origin, direction);
     let floor_hit = floor_intersect(origin, direction);
+
+    if let Some(hit) = ring_hit
+        && sphere_hit
+            .as_ref()
+            .is_none_or(|(_, sphere)| hit.distance < sphere.distance)
+        && floor_hit
+            .as_ref()
+            .is_none_or(|(floor_distance, _)| hit.distance < *floor_distance)
+    {
+        return shade_planet_ring(hit, objects);
+    }
 
     if let Some((floor_distance, point)) = floor_hit
         && sphere_hit
@@ -426,30 +489,80 @@ fn shade_sphere(
                 + Vec3::new(0.8, 0.95, 1.0) * (highlight * 0.9)
                 + Vec3::new(0.02, 0.82, 1.0) * (rim * 0.42)
         }
+        Material::Planet => {
+            let base = planet_texture(hit.normal);
+            let visibility = shadow_visibility(hit.point, hit.normal, objects);
+            let diffuse = hit.normal.dot(to_light).max(0.0) * visibility;
+            let half_vector = (to_light + to_camera).normalized();
+            let highlight = hit.normal.dot(half_vector).max(0.0).powf(48.0) * visibility;
+
+            base * (0.12 + diffuse * 0.88)
+                + Vec3::new(1.0, 0.55, 0.22) * (highlight * 0.38)
+                + Vec3::new(0.18, 0.30, 1.0) * (rim * 0.34)
+        }
     }
 }
 
-fn build_scene() -> [SceneObject; 3] {
+fn build_scene() -> [SceneObject; 4] {
     [
         SceneObject {
-            sphere: Sphere::new(Vec3::new(0.45, -0.15, 0.35), 0.72),
+            sphere: Sphere::new(Vec3::ZERO, 0.43),
             material: Material::Glass {
                 tint: Vec3::new(0.76, 0.94, 0.98),
                 refractive_index: 1.52,
             },
+            orbit: Some(Orbit {
+                radius: 2.05,
+                speed: 0.62,
+                phase: 0.0,
+                height: 0.13,
+            }),
         },
         SceneObject {
-            sphere: Sphere::new(Vec3::new(-0.55, -0.15, -0.20), 0.82),
+            sphere: Sphere::new(Vec3::ZERO, 0.49),
             material: Material::Ceramic,
+            orbit: Some(Orbit {
+                radius: 2.55,
+                speed: 0.47,
+                phase: TAU / 3.0,
+                height: 0.20,
+            }),
         },
         SceneObject {
-            sphere: Sphere::new(Vec3::new(0.45, 0.35, -0.55), 0.65),
+            sphere: Sphere::new(Vec3::ZERO, 0.40),
             material: Material::BrushedMetal {
                 color: Vec3::new(0.95, 0.55, 0.16),
                 roughness: 0.16,
             },
+            orbit: Some(Orbit {
+                radius: 3.05,
+                speed: 0.35,
+                phase: 2.0 * TAU / 3.0,
+                height: 0.28,
+            }),
+        },
+        SceneObject {
+            sphere: Sphere::new(PLANET_CENTER, 0.96),
+            material: Material::Planet,
+            orbit: None,
         },
     ]
+}
+
+fn update_orbits(objects: &mut [SceneObject], elapsed_seconds: f32) {
+    for object in objects {
+        let Some(orbit) = object.orbit else {
+            continue;
+        };
+
+        let angle = orbit.phase + elapsed_seconds * orbit.speed;
+        object.sphere.center = PLANET_CENTER
+            + Vec3::new(
+                angle.cos() * orbit.radius,
+                orbit.height + (angle * 2.0).sin() * 0.07,
+                angle.sin() * orbit.radius,
+            );
+    }
 }
 
 fn render(framebuffer: &mut Framebuffer, objects: &[SceneObject], camera: &Camera) {
@@ -462,26 +575,31 @@ fn render(framebuffer: &mut Framebuffer, objects: &[SceneObject], camera: &Camer
 
     framebuffer.clear();
 
-    for y in 0..HEIGHT {
-        for x in 0..WIDTH {
-            let screen_x = (2.0 * (x as f32 + 0.5) / WIDTH as f32 - 1.0) * aspect_ratio * scale;
-            let screen_y = (1.0 - 2.0 * (y as f32 + 0.5) / HEIGHT as f32) * scale;
-            let direction = (forward + right * screen_x + up * screen_y).normalized();
-            let color = trace_ray(camera_position, direction, objects, MAX_BOUNCES);
+    framebuffer
+        .pixels_mut()
+        .par_chunks_mut(WIDTH)
+        .enumerate()
+        .for_each(|(y, row)| {
+            for (x, pixel) in row.iter_mut().enumerate() {
+                let screen_x = (2.0 * (x as f32 + 0.5) / WIDTH as f32 - 1.0) * aspect_ratio * scale;
+                let screen_y = (1.0 - 2.0 * (y as f32 + 0.5) / HEIGHT as f32) * scale;
+                let direction = (forward + right * screen_x + up * screen_y).normalized();
+                let color = trace_ray(camera_position, direction, objects, MAX_BOUNCES);
 
-            framebuffer.set_pixel(x, y, color.to_rgb());
-        }
-    }
+                *pixel = color.to_rgb();
+            }
+        });
 }
 
 fn main() -> Result<(), minifb::Error> {
     let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT, 0x000000);
-    let objects = build_scene();
-    let mut camera = Camera::new(Vec3::new(0.0, -0.05, -0.10));
+    let mut objects = build_scene();
+    update_orbits(&mut objects, 0.0);
+    let mut camera = Camera::new(PLANET_CENTER);
     render(&mut framebuffer, &objects, &camera);
 
     let mut window = Window::new(
-        "Esferas sobre agujero negro - WASD orbita - R reinicia - ESC sale",
+        "Sistema orbital - WASD mueve la camara - R reinicia - ESC sale",
         WIDTH,
         HEIGHT,
         WindowOptions {
@@ -489,19 +607,33 @@ fn main() -> Result<(), minifb::Error> {
             ..WindowOptions::default()
         },
     )?;
-    window.set_target_fps(60);
+    window.set_target_fps(30);
     let mut previous_frame = Instant::now();
+    let animation_start = Instant::now();
+    let mut fps_timer = Instant::now();
+    let mut rendered_frames = 0_u32;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         let now = Instant::now();
         let delta_seconds = now.duration_since(previous_frame).as_secs_f32().min(0.05);
         previous_frame = now;
 
-        if camera.update(&window, delta_seconds) {
-            render(&mut framebuffer, &objects, &camera);
-        }
+        camera.update(&window, delta_seconds);
+        update_orbits(&mut objects, animation_start.elapsed().as_secs_f32());
+        render(&mut framebuffer, &objects, &camera);
 
         window.update_with_buffer(framebuffer.pixels(), WIDTH, HEIGHT)?;
+        rendered_frames += 1;
+
+        let fps_elapsed = fps_timer.elapsed().as_secs_f32();
+        if fps_elapsed >= 1.0 {
+            let fps = rendered_frames as f32 / fps_elapsed;
+            window.set_title(&format!(
+                "Sistema orbital - {fps:.0} FPS - WASD camara - ESC sale"
+            ));
+            rendered_frames = 0;
+            fps_timer = Instant::now();
+        }
     }
 
     Ok(())
@@ -513,7 +645,7 @@ mod tests {
 
     #[test]
     fn orbital_camera_stays_at_the_requested_distance() {
-        let camera = Camera::new(Vec3::new(0.0, -0.05, -0.10));
+        let camera = Camera::new(PLANET_CENTER);
         let distance_to_target = (camera.position() - camera.target).length();
 
         assert!((distance_to_target - camera.distance).abs() < 0.0001);
@@ -537,13 +669,25 @@ mod tests {
     }
 
     #[test]
-    fn scene_contains_the_original_three_spheres() {
+    fn scene_contains_three_orbiters_and_one_planet() {
         let objects = build_scene();
 
-        assert_eq!(objects.len(), 3);
-        assert!((objects[0].sphere.radius - 0.72).abs() < 0.0001);
-        assert!((objects[1].sphere.radius - 0.82).abs() < 0.0001);
-        assert!((objects[2].sphere.radius - 0.65).abs() < 0.0001);
+        assert_eq!(objects.len(), 4);
+        assert!(objects[..3].iter().all(|object| object.orbit.is_some()));
+        assert!(objects[3].orbit.is_none());
+    }
+
+    #[test]
+    fn satellites_move_while_planet_stays_fixed() {
+        let mut objects = build_scene();
+        update_orbits(&mut objects, 0.0);
+        let satellite_start = objects[0].sphere.center;
+        let planet_start = objects[3].sphere.center;
+
+        update_orbits(&mut objects, 1.0);
+
+        assert_ne!(objects[0].sphere.center, satellite_start);
+        assert_eq!(objects[3].sphere.center, planet_start);
     }
 
     #[test]

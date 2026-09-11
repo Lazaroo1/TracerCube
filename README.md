@@ -1,10 +1,14 @@
 # Escena cósmica
 
-Raytracer en Rust con las tres esferas originales:
+Raytracer en Rust con cuatro esferas en un pequeño sistema planetario:
 
-- Vidrio azulado con reflexión, refracción y efecto Fresnel.
-- Cerámica con patrón ajedrezado rojo y dorado.
-- Metal naranja cepillado.
+- Un planeta central con bandas procedurales y anillos tipo Saturno.
+- Una esfera de vidrio azulado con reflexión, refracción y efecto Fresnel.
+- Una esfera de cerámica con patrón ajedrezado rojo y dorado.
+- Una esfera de metal naranja cepillado.
+
+Las tres esferas pequeñas orbitan continuamente alrededor del planeta a radios
+y velocidades diferentes, como asteroides o satélites.
 
 El suelo representa un agujero negro procedural con horizonte de eventos, anillo
 de fotones, disco de acreción en espiral y polvo cósmico. El cielo conserva sus
