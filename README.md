@@ -6,9 +6,10 @@ Raytracer en Rust con tres cubos idénticos y texturas/materiales procedurales:
 - Metal naranja cepillado.
 - Vidrio azulado con reflexión, refracción y efecto Fresnel.
 
-La escena también incluye un suelo ajedrezado, sombras y un cielo en degradado
-para que las propiedades reflectantes y transparentes sean visibles. No utiliza
-archivos de imagen externos; las texturas se calculan directamente en cada cara.
+La escena también incluye un tablero ajedrezado neón con halos de color, sombras,
+bordes luminosos en cada cubo y un cielo cósmico con estrellas, nebulosa y un
+planeta anillado. No utiliza archivos de imagen externos: todos los detalles se
+calculan directamente en el raytracer.
 
 ## Ejecutar
 
